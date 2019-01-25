@@ -1,0 +1,127 @@
+
+
+if __name__=="__main__":
+    import sys
+    app=QtWidgets.QApplication(sys.argv)
+    widget=QtWidgets.QWidget()
+    ui=Ui_MainWindow()
+    ui.setupUi(widget)
+    widget.show()
+    sys.exit(app.exec_())
+
+
+# textbrowser.append：text：显示多条数据不覆盖
+
+# comboBox_byte.setCurrentIndex(1)  # 设置默认显示数值
+
+# comboBox_brate.setCurrentIndex(6) #设置默认显示数值
+
+# pushButton_open.clicked.connect(self.openserial_click)关联鼠标
+
+# self.pushButton_open.setStyleSheet("background-color:white")//更改按键颜色
+
+binascii.a2b_hex(self.textEdit.toPlainText())：转化为HEX
+
+
+          out_s = ''
+                       for i in range(size):
+                            out_s = out_s + '{:02X}'.format(recv_data[i]) + ' '
+                            self.recv_text.insertPlainText(out_s)
+                           # self.recv_text.append(binascii.b2a_hex(recv_data).decode())
+
+
+ def funOpenFile(self):
+        fname = QFileDialog.getOpenFileName(self, '打开文件', 'math.txt', '*.txt')
+        if fname[0]:
+            f = open(fname[0], 'r')
+            with f:
+                data = f.read()
+                self.lineEdit.setText(data)
+
+
+ files, ok1 = QFileDialog.getOpenFileNames(self,
+                  "多文件选择",
+                  "./",
+                  "All Files (*);;Text Files (*.txt)")
+
+字符默认是Unicode编码
+
+ASCII编码是1个字节，而Unicode编码通常是2个字
+
+strings.encode()   将字符串编码为bytes
+
+bytes类型能通过串口收发，转化的实质是将十六进制代码逐字节转化为bytes类型，就是字节流。
+
+
+[20:04:08.362]发→◇7F 0A □
+[20:04:09.001]收←◆37 66 30 30 0D 0A
+[20:04:13.584]发→◇9F 0A □      写flash 需要时间大约130ms
+[20:04:13.701]收←◆39 66 30 30 0D 0A
+
+
+
+
+                    while self.length - self.counterlen > 128:
+                        self.read_addr = f.tell()  # 获取读开始地址
+                        downloadcounter += 1
+                        self.recv_text.append("开始写地址： " + str(self.read_addr))
+
+                        f.seek(self.read_addr, 0)  # 从起始位置即文件首行首字符开始移动 x 个字符
+
+                        self.flash_data = ''
+                        self.flash_data = f.read(128)
+                        self.flash_data += '\n'.encode()
+
+                        self.write_len = ser.write(self.flash_data)
+                        ser.flush()
+                        self.recv_text.append("Flash Len" + str(len(self.flash_data)) + str(self.write_len))
+                        time.sleep(0.3) #300ms
+                        self.receive_data()
+
+                        if recv_data[-6:] == self.checkout[1]:
+                            self.recv_text.append("Flash Download Is Sucess!!!")
+                            recv_data = ''
+
+                        else:
+                            self.recv_text.append("Flash Download Is Fail!!!" + str(recv_data[-6:]))
+                            recv_data = ''
+                        self.counterlen += 128
+                        time.sleep(1) # 200ms
+
+                    self.read_addr = f.tell()  # 获取读开始地址
+                    f.seek(self.read_addr, 0)  # 从起始位置即文件首行首字符开始移动 x 个字符
+
+                    self.flash_data = ''
+                    self.flash_data = f.read(self.length - self.counterlen)
+                    self.flash_data += '\n'.encode()
+
+                    ser.write(self.flash_data)
+                    ser.flush()
+                    recv_data = ''
+                    time.sleep(0.8)
+                    self.receive_data()
+
+                    if recv_data == self.checkout[self.serialoperation]:
+                        self.recv_text.append("Flash Download Is Sucess!!!")
+
+                    else:
+                        self.recv_text.append("Flash Download Is Fail!!!" + str(recv_data))
+                    time.sleep(0.5)
+                    f.close()
+                    self.timer.start(2)
+
+
+
+
+                        def download(self):
+        if self.checkBox_file.isChecked():
+            if filetype[0]:
+                # import 自己的进程类
+                from downthreads import BigWorkThread
+                # 新建对象
+                self.bwThread = BigWorkThread()
+
+                # 开始执行run()函数里的内容
+                self.bwThread.run()
+        else:
+            pass
