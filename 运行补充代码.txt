@@ -112,16 +112,24 @@ bytes类型能通过串口收发，转化的实质是将十六进制代码逐字
 
 
 
+self.recv_buf.append("recv = " + str(recv_num) + str(self.recv_end))
+            while self.recv_end < recv_num:
+                if recv_data[self.recv_end] == 0x0d:
+                    self.recv_end += 1
+                    if recv_data[self.recv_end] == 0x0a:
+                        self.recv_end += 1
+                        self.recv_buf.append(recv_data[self.recv_start:self.recv_end])
+                        self.recv_start = self.recv_end
+                        self.counter += 1
+                        self.recv_text.append("  Flash All Erase Is !!!")
+                    else:
+                        self.recv_end += 1
 
-                        def download(self):
-        if self.checkBox_file.isChecked():
-            if filetype[0]:
-                # import 自己的进程类
-                from downthreads import BigWorkThread
-                # 新建对象
-                self.bwThread = BigWorkThread()
+            self.recv_start = 0
 
-                # 开始执行run()函数里的内容
-                self.bwThread.run()
-        else:
-            pass
+            while self.recv_start < self.counter:
+                if self.recv_buf[self.recv_start] == self.checkout[0]:
+                    self.recv_text.append("  Flash All Erase Is Sucess!!!")
+                elif self.recv_buf[self.recv_start] == self.checkout[1]:
+                    self.recv_text.append("  Flash All Erase Is Fail!!!")
+                self.recv_start += 1

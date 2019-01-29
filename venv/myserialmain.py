@@ -1,5 +1,7 @@
 
 # -*- coding: utf-8 -*-
+#coding=gbk
+
 # download后面改为后台线程运行
 
 import sys
@@ -9,8 +11,9 @@ from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QFileDialog
 from PyQt5.QtCore import QDir
 
-from PyQt5 import QtCore
+from PyQt5 import QtCore, QDate
 from PyQt5.QtCore import *
+from PyQt5.QtWidgets import QComboBox
 
 import serial
 import serial.tools.list_ports
@@ -19,6 +22,8 @@ import os
 import time
 import operator
 import threading
+
+import requests
 
 counter = 0
 
@@ -54,17 +59,23 @@ class Runthread(QtCore.QThread):
 
         self.progress = 0
 
-        # 串口命令下标
-      #  self.cmdindex = 0
+        self.checkoutbuf = ['7f00\r\n', '7f01\r\n', '9f00\r\n', '9f01\r\n', 'af00\r\n', 'af01\r\n', 'cf00\r\n', 'cf01\r\n']
+        self.checkout = []
 
-        # 串口命令最大下标
-       # self.cmdmaxindex = 3
+        for i in range(len(self.checkoutbuf)):
+            self.checkout.append(self.checkoutbuf[i].encode())  # 将字符串编码为bytes
+
+        # 下载长度累计
+        self.counterlen = 0
+        # 下载次数计算
+        self.counterdownload = 0
+
         if ser.isOpen():
-            self.checkoutbuf = ['7f00\r\n', '9f00\r\n', 'af00\r\n']
-            self.checkout = []
 
-            for i in range(len(self.checkoutbuf)):
-                self.checkout.append(self.checkoutbuf[i].encode())  # 将字符串编码为bytes
+            self.checkstate = False
+            self.erasestate = False
+            self.programstate = False
+            self.jumpstate = False
 
             # 发送擦除命令 0x7f 0x0a
             # 等待接收到: 0x7f 0x00,非0x00则失败需要再次发送命令
@@ -72,91 +83,193 @@ class Runthread(QtCore.QThread):
             # 等待接收命令: 0xAF 0x00, 非0x00则烧写失败，需要再次发送当前数据进行烧写，重发5次烧写失败则再次下发擦除命令
             # 发送完最后一帧数据后，下发0xaf 0x0A，退出烧写模式，若没接收到0x9f 0x00则需要再次重发
 
-            self.eraseflash()
-            self.programme()
-            self.gotoapp()
+            while self.checkstate == False:
+                self.checkstate = self.checkflash()
+                if self.checkstate == False:
+                    time.sleep(1)
 
+            while self.erasestate == False:
+                self.erasestate = self.eraseflash()
+                if self.erasestate == False:
+                    time.sleep(1)
+
+            while self.programstate == False:
+                self.programstate = self.programme()
+                if self.programstate == False:
+                    time.sleep(1)
+                    self.checkstate = False
+                    while self.checkstate == False:
+                        self.checkstate = self.checkflash()
+                        if self.checkstate == False:
+                            time.sleep(1)
+
+            while self.jumpstate == False:
+                self.jumpstate = self.gotoapp()
+                if self.jumpstate == False:
+                    time.sleep(1)
+
+    def checkflash(self):
+        if ser.isOpen():
+            # 接收数据处理
+            self.recv_start = 0
+            self.recv_buf = []
+            self.recv_end = 0
+            self.recv_data = ''
+            file_str = ''
+            self.counter = 0
+            self.checkstates = False
+
+            self.flash_data = b'\xcf'  # 定义bytes : b'\x...'
+            self.flash_data += b'\x55'
+            self.flash_data += b'\xaa'
+            self.write_len = ser.write(self.flash_data)
+            ser.flush()
+            time.sleep(1.8)
+
+            try:
+                self.size = ser.inWaiting()
+            except ValueError:
+                pass
+
+            if self.size > 0:
+                self.recv_data = ''
+                self.recv_data = ser.read(self.size)
+                self.counter = 0
+                self.recv_end = 0
+                while self.recv_end < self.size:
+                    if self.recv_data[self.recv_end] == 0x0d:
+                        self.recv_end += 1
+                        if self.recv_data[self.recv_end] == 0x0a:
+                            self.recv_end += 1
+                            self.recv_buf.append(self.recv_data[self.recv_start:self.recv_end])
+                            self.recv_start = self.recv_end
+                            self.counter += 1
+                    else:
+                        self.recv_end += 1
+
+                self.recv_start = 0
+
+                file_str += self.recv_data.decode('iso-8859-1')
+
+                while self.recv_start < self.counter:
+                    if self.recv_buf[self.recv_start] == self.checkout[6]:
+                        file_str += "  Flash Check Is Sucess!!!"
+                        self.checkstates = True
+                    elif self.recv_buf[self.recv_start] == self.checkout[7]:
+                        file_str += "  Flash Check Is Fail!!!" + str(self.recv_data)
+                        self.checkstates = False
+                    self.recv_start += 1
+                self.size = 0
+
+            # 清除接收缓存
+            ser.flushInput()
+            self.sinOut.emit(file_str, 0, self.progress)
+        return self.checkstates
 
     def eraseflash(self):
-            # 下载长度累计
-            self.counterlen = 0
-            # 下载次数计算
-            self.counterdownload = 0
+        if ser.isOpen():
+            # 接收数据处理
+            self.recv_start = 0
+            self.recv_buf = []
+            self.recv_end = 0
+            self.recv_data = ''
+            file_str = ''
+            self.counter = 0
 
-            if ser.isOpen():
+            self.erasestate = False
 
-                self.flash_data = b'\x7f'  # 定义bytes : b'\x...'
-                self.flash_data += b'\x55'
-                self.flash_data += b'\xaa'
-                self.write_len = ser.write(self.flash_data)
-                ser.flush()
-                time.sleep(0.8)
+            self.flash_data = b'\x7f'  # 定义bytes : b'\x...'
+            self.flash_data += b'\x55'
+            self.flash_data += b'\xaa'
+            self.write_len = ser.write(self.flash_data)
+            ser.flush()
+            time.sleep(0.8)
 
-                try:
-                    self.size = ser.inWaiting()
-                except ValueError:
-                    pass
+            try:
+                self.size = ser.inWaiting()
+            except ValueError:
+                pass
 
-                if self.size > 0:
-                    recv_data = ''
-                    recv_data = ser.read(self.size)
+            if self.size > 0:
+                self.recv_data = ''
+                self.recv_data = ser.read(self.size)
 
-                    if recv_data != '':
-                        self.size = len(recv_data)
-                        # 清除接收缓存
-                        ser.flushInput()
-                        file_str = recv_data.decode('iso-8859-1')
+                self.counter = 0
+                self.recv_end = 0
 
-                        if recv_data == self.checkout[0]:
-                            file_str += "  Flash Erase Is Sucess!!!"
-                        else:
-                            file_str += "  Flash Erase Is Fail!!!" + str(recv_data)
-                        self.sinOut.emit(file_str, 0, self.progress)
+                while self.recv_end < self.size:
+                    if self.recv_data[self.recv_end] == 0x0d:
+                        self.recv_end += 1
+                        if self.recv_data[self.recv_end] == 0x0a:
+                            self.recv_end += 1
+                            self.recv_buf.append(self.recv_data[self.recv_start:self.recv_end])
+                            self.recv_start = self.recv_end
+                            self.counter += 1
+                    else:
+                        self.recv_end += 1
 
-                        self.size = 0
-                else:
-                    file_str = "串口关闭"
-            file_str = ""
+                self.recv_start = 0
+                file_str += self.recv_data.decode('iso-8859-1')
+
+                while self.recv_start < self.counter:
+                    if self.recv_buf[self.recv_start] == self.checkout[0]:
+                        file_str += "  Flash Erase Is Sucess!!!"
+                        self.erasestate = True
+                    elif self.recv_buf[self.recv_start] == self.checkout[1]:
+                        file_str += "  Flash Erase Is Fail!!!" + str(self.recv_data)
+                        self.erasestate = False
+                    self.recv_start += 1
+
+                self.size = 0
+
+            # 清除接收缓存
+            ser.flushInput()
             self.sinOut.emit(file_str, 0, self.progress)
 
+            return self.erasestate
+
     def programme(self):
-            # 下载长度累计
-            self.counterlen = 0
-            # 下载次数计算
-            self.counterdownload = 0
+        # 接收数据处理
+        self.recv_start = 0
+        self.recv_buf = []
+        self.recv_end = 0
+        self.recv_data = ''
+        file_str = ''
+        self.counter = 0
+        # 进度条每次计数
+        self.progressadd = 0
 
-            # 进度条每次计数
-            self.progressadd = 0
+        self.programstate = False
 
-            f = open(filetype[0], 'rb')  # ''' rb : read bin file'''
-            self.read_addr = 0
-            # 获取下载文件大小
-            self.length = os.path.getsize(filetype[0])
+        f = open(filetype[0], 'rb')  # ''' rb : read bin file'''
+        self.read_addr = 0
+         # 获取下载文件大小
+        self.length = os.path.getsize(filetype[0])
 
-            self.counterdownload = self.length//128
-            if self.length % 128 != 0:
-                self.counterdownload += 1
+        self.counterdownload = self.length//128
+        if self.length % 128 != 0:
+            self.counterdownload += 1
 
-            # 获取每次进度条加的数值
-            self.progressadd = 100//self.counterdownload
-            if 100 % self.counterdownload != 0:
-                self.progressadd += 1
+        # 获取每次进度条加的数值
+        self.progressadd = 100/self.counterdownload
 
-            while self.counterdownload > 0:
-                if ser.isOpen():
-                    self.read_addr = f.tell()  # 获取读开始地址
+        while self.counterdownload > 0:
+            if ser.isOpen():
+                self.read_addr = f.tell()  # 获取读开始地址
 
-                    f.seek(self.read_addr, 0)  # 从起始位置即文件首行首字符开始移动 x 个字符
+                f.seek(self.read_addr, 0)  # 从起始位置即文件首行首字符开始移动 x 个字符
 
-                    self.flash_data = b'\x9f'  # 定义bytes : b'\x...'
+                self.flash_data = b'\x9f'  # 定义bytes : b'\x...'
 
-                    if self.length - self.counterlen >= 128:
-                        self.flash_data += f.read(128)
-                    else:
-                        self.flash_data += f.read(self.length - self.counterlen)
-                    self.flash_data += b'\x55'
-                    self.flash_data += b'\xaa'
+                if self.length - self.counterlen >= 128:
+                    self.flash_data += f.read(128)
+                else:
+                    self.flash_data += f.read(self.length - self.counterlen)
+                self.flash_data += b'\x55'
+                self.flash_data += b'\xaa'
 
+                self.programcounter = 0
+                while self.programcounter < 5:  # 烧写失败，则重复烧写，最多重复烧写5次
                     time.sleep(0.6)  # 400ms预留处理
                     self.write_len = ser.write(self.flash_data)
                     ser.flush()
@@ -168,76 +281,121 @@ class Runthread(QtCore.QThread):
                         pass
 
                     if self.size > 0:
-                        recv_data = ''
-                        recv_data = ser.read(self.size)
-                        #   self.recv_text.insertPlainText("size: " + str(self.size))
-                        if recv_data != '':
-                            self.size = len(recv_data)
-                            # 清除接收缓存
-                            ser.flushInput()
-                            file_str = recv_data.decode('iso-8859-1')
-                            file_str += "开始写地址： " + str(self.read_addr) + "下载倒计数: " + str(self.counterdownload)
-                            if recv_data[-6:] == self.checkout[1]:
-                                file_str += "  Flash Download Is Sucess!!!"
-                                self.progress += self.progressadd
+                        self.recv_data = ''
+                        self.recv_data = ser.read(self.size)
+                        self.counter = 0
+                        self.recv_end = 0
+
+                        while self.recv_end < self.size:
+                            if self.recv_data[self.recv_end] == 0x0d:  # '\r'
+                                self.recv_end += 1
+                                if self.recv_data[self.recv_end] == 0x0a:  # '\n'
+                                    self.recv_end += 1
+                                    self.recv_buf.append(self.recv_data[self.recv_start:self.recv_end])
+                                    self.recv_start = self.recv_end
+                                    self.counter += 1
                             else:
-                                file_str += "  Flash Download Is Fail!!!" + str(recv_data[-6:])
-                            self.sinOut.emit(file_str, 0, self.progress)
+                                self.recv_end += 1
 
-                            self.size = 0
-                    self.counterlen += 128
-                    self.counterdownload -= 1
+                        self.recv_start = 0
+                        file_str = self.recv_data.decode('iso-8859-1')
 
-                else:
-                    file_str = "串口关闭"
-                    break
-            f.close()
-            file_str = ""
-            self.sinOut.emit(file_str, 0, self.progress)
-
-    def gotoapp(self):
-            # 下载长度累计
-            self.counterlen = 0
-            # 下载次数计算
-            self.counterdownload = 0
-
-            if ser.isOpen():
-
-                self.flash_data = b'\xaf'  # 定义bytes : b'\x...'
-                self.flash_data += b'\x55'
-                self.flash_data += b'\xaa'
-                self.write_len = ser.write(self.flash_data)
-                ser.flush()
-                time.sleep(0.8)
-
-                try:
-                    self.size = ser.inWaiting()
-                except ValueError:
-                    pass
-
-                if self.size > 0:
-                    recv_data = ''
-                    recv_data = ser.read(self.size)
-
-                    if recv_data != '':
-                        self.size = len(recv_data)
                         # 清除接收缓存
                         ser.flushInput()
-                        file_str = recv_data.decode('iso-8859-1')
 
-                        if recv_data == self.checkout[2]:
-                            file_str += "  Go to Is Sucess!!!"
-                        else:
-                            file_str += "  Go to Is Fail!!!" + str(recv_data)
-                        self.sinOut.emit(file_str, 0, self.progress)
+                        file_str += "开始写地址： " + str(self.read_addr) + "下载倒计数: " + str(self.counterdownload)
+                        while self.recv_start < self.counter:
+                            if self.recv_buf[self.recv_start] == self.checkout[2]:
+                                file_str += "  Flash Download Is Sucess!!!"
+                                self.progress += self.progressadd
+                                self.programstate = True
+                            elif self.recv_buf[self.recv_start] == self.checkout[3]:
+                                file_str += "  Flash Download Is Fail!!!" + str(recv_data)
+                                self.programstate = False
+                                self.programcounter += 1
+
+                            self.recv_start += 1
 
                         self.size = 0
-                else:
-                    file_str = "串口关闭"
-            file_str = ""
+                        self.sinOut.emit(file_str, 0, self.progress)
+
+                    if self.programstate == True:
+                        break
+
+                self.counterlen += 128
+                self.counterdownload -= 1
+
+            else:
+                file_str = "串口关闭"
+                break
+        f.close()
+        self.sinOut.emit(file_str, 0, self.progress)
+        return self.programstate
+
+    def gotoapp(self):
+        if ser.isOpen():
+            # 接收数据处理
+            self.recv_start = 0
+            self.recv_buf = []
+            self.recv_end = 0
+            self.recv_data = ''
+            file_str = ''
+            self.counter = 0
+
+            self.jumpstate = False
+
+            self.flash_data = b'\xaf'  # 定义bytes : b'\x...'
+            self.flash_data += b'\x55'
+            self.flash_data += b'\xaa'
+            self.write_len = ser.write(self.flash_data)
+            ser.flush()
+            time.sleep(1.5)
+
+            try:
+                self.size = ser.inWaiting()
+            except ValueError:
+                pass
+
+            if self.size > 0:
+                self.recv_data = ''
+                self.recv_data = ser.read(self.size)
+
+                self.counter = 0
+                self.recv_end = 0
+
+                while self.recv_end < self.size:
+                    if self.recv_data[self.recv_end] == 0x0d:
+                        self.recv_end += 1
+                        if self.recv_data[self.recv_end] == 0x0a:
+                            self.recv_end += 1
+                            self.recv_buf.append(self.recv_data[self.recv_start:self.recv_end])
+                            self.recv_start = self.recv_end
+                            self.counter += 1
+                    else:
+                        self.recv_end += 1
+
+                self.recv_start = 0
+
+                file_str = self.recv_data.decode('iso-8859-1')
+                while self.recv_start < self.counter:
+                    if self.recv_buf[self.recv_start] == self.checkout[4]:
+                        file_str += "  Flash Jump Is Sucess!!!"
+                        file_str += " 升级成功"
+                        self.jumpstate = True
+                    elif self.recv_buf[self.recv_start] == self.checkout[5]:
+                        file_str += "  Flash Jump Is Fail!!!" + str(self.recv_data)
+                        file_str += " 升级失败，请重新升级"
+                        self.jumpstate = False
+                    self.recv_start += 1
+                self.size = 0
+
+            else:
+                file_str = "串口关闭"
+            self.progress = 100
+            # 清除接收缓存
+            ser.flushInput()
             self.sinOut.emit(file_str, 1, self.progress)
-
-
+            return self.jumpstate
 
 class mywindow(QtWidgets.QWidget, Ui_MainWindow):
 
@@ -263,6 +421,8 @@ class mywindow(QtWidgets.QWidget, Ui_MainWindow):
         self.pushButton_send.clicked.connect(self.data_send)
         self.pushButton_clearsend.clicked.connect(self.clear_send)
         self.pushButton_clear.clicked.connect(self.clear_recv)
+        self.pushButton_allerase.clicked.connect(self.erase_flash)
+
         '''定时器接收数据'''
         self.timer = QTimer()
         self.timer.timeout.connect(self.receive_data)
@@ -306,7 +466,6 @@ class mywindow(QtWidgets.QWidget, Ui_MainWindow):
             self.comboBox_parity.addItem(crc[index])
 
         port_list = list(serial.tools.list_ports.comports())
-
         if len(port_list) <= 0:
             self.recv_text.append("The Serial port can't find!")
             self.pushButton_open.setText("打开")
@@ -418,6 +577,48 @@ class mywindow(QtWidgets.QWidget, Ui_MainWindow):
     def clear_recv(self):
         self.recv_text.setText("")
 
+    def erase_flash(self):
+
+        if ser.isOpen():
+            # 接收数据处理
+            self.recv_data = ''
+            self.checkoutbuf = ['bf00\r\n', 'bf01\r\n']
+            self.checkout = []
+
+            self.size = 0
+
+            for i in range(len(self.checkoutbuf)):
+                self.checkout.append(self.checkoutbuf[i].encode())  # 将字符串编码为bytes
+
+            self.flash_data = b'\xbf'  # 定义bytes : b'\x...'
+            self.flash_data += b'\x55'
+            self.flash_data += b'\xaa'
+            self.write_len = ser.write(self.flash_data)
+            ser.flush()
+            recv_num = 0
+            self.timer.stop()
+            time.sleep(1.5)
+            try:
+                self.size = ser.inWaiting()
+            except ValueError:
+                pass
+
+            if self.size > 0:
+                self.recv_data = ''
+                self.recv_data = ser.read(self.size)
+
+            self.recv_text.append(self.recv_data.decode('iso-8859-1'))
+
+            if self.recv_data[0:7] == self.checkout[0]:
+                self.recv_text.append("  Flash All Erase Is Sucess!!!")
+            elif self.recv_data == self.checkout[1]:
+                self.recv_text.append("  Flash All Erase Is Fail!!!")
+
+            self.timer.start(2)
+        else:
+            self.recv_text.append("串口关闭")
+
+
     def receive_data(self):
         global recv_data
         global recv_num
@@ -440,7 +641,8 @@ class mywindow(QtWidgets.QWidget, Ui_MainWindow):
                     if self.checkBox_hex.isChecked():
                         self.recv_text.insertPlainText(binascii.b2a_hex(recv_data).decode())
                     else:
-                        self.recv_text.insertPlainText(recv_data.decode('iso-8859-1'))
+                      #  recv_data = recv_data.decode('iso-8859-1')
+                      self.recv_text.insertPlainText(recv_data.decode('GBK', 'ignore'))
 
                     recv_num += self.size
                     self.size = 0
